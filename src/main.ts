@@ -1,114 +1,61 @@
-import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
-	Plugin,
-} from 'obsidian';
-import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
+import { Plugin } from 'obsidian';
+import { EverAISettings, DEFAULT_SETTINGS } from './settings';
+import { registerCommands } from './commands';
+import { EverAISettingTab } from './ui/settings-tab';
+import { BackendClient } from './backend/client';
 
-// Remember to rename these classes and interfaces!
+/**
+ * EverAI Plugin - Main entry point
+ * 
+ * Responsibilities:
+ * - Plugin lifecycle management (onload, onunload)
+ * - Settings initialization and persistence
+ * - Command registration
+ * - Backend client initialization
+ */
+export default class EverAIPlugin extends Plugin {
+	settings!: EverAISettings;
+	backendClient!: BackendClient;
 
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
+	/**
+	 * Plugin load hook - called when Obsidian loads the plugin
+	 */
+	async onload(): Promise<void> {
+		console.log('EverAI: Loading plugin...');
 
-	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			},
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
-	}
-
-	onunload() {}
-
-	async loadSettings() {
+		// Initialize settings from saved data or use defaults
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
+			(await this.loadData()) as Partial<EverAISettings>,
 		);
+
+		// Initialize backend client
+		this.backendClient = new BackendClient(this.settings.backendUrl);
+
+		// Register all commands
+		registerCommands(this);
+
+		// Register settings tab
+		this.addSettingTab(new EverAISettingTab(this.app, this));
+
+		console.log('EverAI: Plugin loaded successfully');
 	}
 
-	async saveSettings() {
+	/**
+	 * Plugin unload hook - called when Obsidian unloads the plugin
+	 * Cleanup all listeners and resources
+	 */
+	async onunload(): Promise<void> {
+		console.log('EverAI: Unloading plugin...');
+		// All registered event listeners and DOM listeners are automatically cleaned up
+		// by Obsidian's plugin system via register* helpers
+	}
+
+	/**
+	 * Save settings to persistent storage
+	 */
+	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
 	}
 }
