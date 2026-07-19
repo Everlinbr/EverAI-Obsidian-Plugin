@@ -1,59 +1,84 @@
-import EverAIPlugin from '../main';
+import { Notice } from "obsidian";
+import EverAIPlugin from "../main";
 
 /**
- * Register all plugin commands
- * 
- * @param plugin - The EverAI plugin instance
+ * Register all plugin commands.
  */
 export function registerCommands(plugin: EverAIPlugin): void {
-	// Test command to verify plugin is working
+
 	plugin.addCommand({
-		id: 'everai-test-connection',
-		name: 'Test backend connection',
+		id: "everai-open-chat",
+		name: "Open EverAI Chat",
+		callback: async () => {
+			await plugin.activateChatView();
+		},
+	});
+
+	plugin.addCommand({
+		id: "everai-test-backend",
+		name: "Test Backend Connection",
 		callback: async () => {
 			await testBackendConnection(plugin);
 		},
 	});
 
-	// Open chat sidebar command
 	plugin.addCommand({
-		id: 'everai-open-chat',
-		name: 'Open chat sidebar',
-		callback: async () => {
-			await openChatSidebar(plugin);
+		id: "everai-clear-chat",
+		name: "Clear Chat History",
+		callback: () => {
+
+			if (!plugin.chatManager) {
+				new Notice("EverAI is not initialized.");
+				return;
+			}
+
+			plugin.chatManager.clearHistory();
+			new Notice("EverAI chat history cleared.");
+
 		},
 	});
+
 }
 
 /**
- * Test connection to backend
- * 
- * @param plugin - The EverAI plugin instance
+ * Test backend connection.
  */
 async function testBackendConnection(plugin: EverAIPlugin): Promise<void> {
-	try {
-		const status = await plugin.backendClient.getStatus();
-		if (status.isHealthy) {
-			console.log('EverAI: Backend connection successful');
-			console.log(`Model: ${status.modelName}, Memory: ${status.memoryUsage}MB`);
-		} else {
-			console.error('EverAI: Backend is not healthy');
-		}
-	} catch (error) {
-		console.error('EverAI: Failed to connect to backend', error);
-	}
-}
 
-/**
- * Open the chat sidebar
- * 
- * @param plugin - The EverAI plugin instance
- */
-async function openChatSidebar(plugin: EverAIPlugin): Promise<void> {
-	if (!plugin.settings.showChatSidebar) {
-		console.log('EverAI: Chat sidebar is disabled in settings');
-		return;
+	try {
+
+		const status = await plugin.backendClient.getStatus();
+
+		if (status.isHealthy) {
+
+			new Notice(
+				`Connected to ${status.modelName}`
+			);
+
+			console.log(
+				"[EverAI] Backend OK",
+				status
+			);
+
+		} else {
+
+			new Notice(
+				"Backend is running but not healthy."
+			);
+
+		}
+
+	} catch (error) {
+
+		console.error(
+			"[EverAI]",
+			error
+		);
+
+		new Notice(
+			"Failed to connect to backend."
+		);
+
 	}
-	console.log('EverAI: Opening chat sidebar');
-	// Chat sidebar view will be implemented in future milestone
+
 }
