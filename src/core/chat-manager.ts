@@ -1,108 +1,196 @@
 /**
- * Chat manager for handling conversation flow
- * 
- * Orchestrates chat operations: sending messages, managing history,
- * and coordinating with backend
+ * Chat Manager
+ *
+ * Central coordinator for all EverAI conversations.
+ *
+ * Responsibilities:
+ * - Validate user input
+ * - Manage conversation history
+ * - Build backend requests
+ * - Coordinate with BackendClient
+ * - Support cancellation
+ * - Emit events (future)
  */
 
-import { ChatMessage, ChatCompletionRequest, ChatCompletionResponse } from '../types';
-import { BackendClient } from '../backend/client';
-import { MemoryStore } from './memory';
-import { generateId } from '../utils/helpers';
-import { logger } from '../utils/logger';
+import {
+	ChatMessage,
+	ChatCompletionRequest,
+	ChatCompletionResponse,
+} from "../types";
+
+import { BackendClient } from "../backend/client";
+import { MemoryStore } from "./memory";
+import { generateId } from "../utils/helpers";
+import { logger } from "../utils/logger";
 
 export class ChatManager {
-	private backend: BackendClient;
-	private memory: MemoryStore;
-	private isProcessing = false;
+	private readonly backend: BackendClient;
+	private readonly memory: MemoryStore;
 
-	constructor(backend: BackendClient, memoryStore: MemoryStore) {
+	constructor(
+		backend: BackendClient,
+		memory: MemoryStore
+	) {
 		this.backend = backend;
-		this.memory = memoryStore;
+		this.memory = memory;
 	}
 
 	/**
-	 * Send a message and get response
+	 * Send a message to the backend.
 	 */
-	async sendMessage(
+	public async sendMessage(
 		message: string,
 		options?: {
 			useMemory?: boolean;
 			enableInternet?: boolean;
 			maxTokens?: number;
 		}
-	): Promise<ChatCompletionResponse | null> {
-		if (this.isProcessing) {
-			logger.warn('Chat manager is already processing a message');
-			return null;
-		}
+	): Promise<ChatCompletionResponse> {
 
-		this.isProcessing = true;
+		const cleanedMessage = this.validateMessage(message);
+
+		const userMessage = this.createUserMessage(cleanedMessage);
+
+		this.memory.add(userMessage);
+
+		const request = this.buildRequest(
+			cleanedMessage,
+			options
+		);
+
+		logger.info("Sending request to backend...");
 
 		try {
-			// Add user message to memory
-			const userMessage: ChatMessage = {
-				id: generateId(),
-				role: 'user',
-				content: message,
-				timestamp: Date.now(),
-			};
 
-			this.memory.add(userMessage);
-
-			// Prepare request
-			const request: ChatCompletionRequest = {
-				message,
-				conversationHistory: this.memory.getAll(),
-				useMemory: options?.useMemory ?? true,
-				enableInternetTools: options?.enableInternet ?? false,
-				maxTokens: options?.maxTokens ?? 256,
-			};
-
-			// Send to backend
 			const response = await this.backend.chat(request);
 
-			// Add assistant response to memory
-			if (response) {
-				const assistantMessage: ChatMessage = {
-					id: response.id,
-					role: 'assistant',
-					content: response.content,
-					timestamp: response.timestamp,
-					tokensUsed: response.tokensUsed,
-				};
+			this.storeAssistantMessage(response);
 
-				this.memory.add(assistantMessage);
-			}
+			logger.info("Assistant response received.");
 
 			return response;
+
 		} catch (error) {
-			logger.error('Failed to send message', error);
-			return null;
-		} finally {
-			this.isProcessing = false;
+
+			logger.error("Chat request failed", error);
+
+			throw error;
+
 		}
 	}
 
 	/**
-	 * Get conversation history
+	 * Cancel current generation.
 	 */
-	getHistory(): ChatMessage[] {
+	public cancelGeneration(): void {
+		logger.info("Cancelling generation...");
+		this.backend.cancel();
+	}
+
+	/**
+	 * Get conversation history.
+	 */
+	public getHistory(): ChatMessage[] {
 		return this.memory.getAll();
 	}
 
 	/**
-	 * Clear conversation
+	 * Clear all messages.
 	 */
-	clearHistory(): void {
+	public clearHistory(): void {
 		this.memory.clear();
-		logger.info('Conversation history cleared');
+		logger.info("Conversation cleared.");
 	}
 
 	/**
-	 * Check if processing
+	 * Validate incoming message.
 	 */
-	isProcessingMessage(): boolean {
-		return this.isProcessing;
+	private validateMessage(message: string): string {
+
+		const trimmed = message.trim();
+
+		if (trimmed.length === 0) {
+			throw new Error("Message cannot be empty.");
+		}
+
+		if (trimmed.length > 10000) {
+			throw new Error("Message is too long.");
+		}
+
+		return trimmed;
+	}
+
+	/**
+	 * Create user message object.
+	 */
+	private createUserMessage(
+		content: string
+	): ChatMessage {
+
+		return {
+			id: generateId(),
+			role: "user",
+			content,
+			timestamp: Date.now(),
+		};
+	}
+
+	/**
+	 * Build backend request.
+	 *
+	 * NOTE:
+	 * Later this function will also attach:
+	 * - Current note
+	 * - Vault context
+	 * - Memories
+	 * - Tool results
+	 */
+	private buildRequest(
+		message: string,
+		options?: {
+			useMemory?: boolean;
+			enableInternet?: boolean;
+			maxTokens?: number;
+		}
+	): ChatCompletionRequest {
+
+		return {
+
+			message,
+
+			conversationHistory: this.memory.getLast(25),
+
+			useMemory:
+				options?.useMemory ?? true,
+
+			enableInternetTools:
+				options?.enableInternet ?? false,
+
+			maxTokens:
+				options?.maxTokens ?? 256,
+		};
+	}
+
+	/**
+	 * Store assistant reply.
+	 */
+	private storeAssistantMessage(
+		response: ChatCompletionResponse
+	): void {
+
+		const assistantMessage: ChatMessage = {
+
+			id: response.id,
+
+			role: "assistant",
+
+			content: response.content,
+
+			timestamp: response.timestamp,
+
+			tokensUsed: response.tokensUsed,
+		};
+
+		this.memory.add(assistantMessage);
 	}
 }
