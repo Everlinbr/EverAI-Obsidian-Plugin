@@ -1,314 +1,387 @@
 /**
- * Chat View - Side Panel Component
- * 
- * Displays the chat interface as a dockable side panel in Obsidian
- * with message history, input box, and action buttons
+ * EverAI Chat View
+ *
+ * Modern Obsidian side panel.
+ *
+ * Android-first.
+ * Local AI first.
  */
 
-import { ItemView, WorkspaceLeaf, App } from 'obsidian';
-import { ChatManager } from '../../core/chat-manager';
-import { eventBus } from '../../core/event-bus';
-import { logger } from '../../utils/logger';
-import { generateId, truncateText } from '../../utils/helpers';
-import { ChatMessage } from '../../types';
+import {
+	App,
+	ItemView,
+	MarkdownRenderer,
+	Notice,
+	TFile,
+	WorkspaceLeaf
+} from "obsidian";
 
-const VIEW_TYPE_CHAT = 'everai-chat-view';
-const VIEW_DISPLAY_TEXT = 'EverAI Chat';
+import { ChatManager } from "../core/chat-manager";
+import { ChatMessage } from "../types";
 
-/**
- * Chat View Component for side panel
- */
+export const VIEW_TYPE = "everai-chat";
+
 export class ChatView extends ItemView {
-	private chatManager: ChatManager | null = null;
-	private messagesContainer: HTMLElement | null = null;
-	private inputElement: HTMLTextAreaElement | null = null;
-	private sendButton: HTMLButtonElement | null = null;
-	private clearButton: HTMLButtonElement | null = null;
-	private isLoading = false;
 
-	constructor(leaf: WorkspaceLeaf) {
+	private chatManager!: ChatManager;
+
+	private header!: HTMLElement;
+	private status!: HTMLElement;
+
+	private currentNote!: HTMLElement;
+
+	private messages!: HTMLElement;
+
+	private input!: HTMLTextAreaElement;
+
+	private sendButton!: HTMLButtonElement;
+
+	private stopButton!: HTMLButtonElement;
+
+	private isGenerating = false;
+
+	constructor(
+		leaf: WorkspaceLeaf,
+		chatManager: ChatManager
+	) {
 		super(leaf);
-	}
 
-	getViewType(): string {
-		return VIEW_TYPE_CHAT;
-	}
-
-	getDisplayText(): string {
-		return VIEW_DISPLAY_TEXT;
-	}
-
-	getIcon(): string {
-		return 'message-circle';
-	}
-
-	/**
-	 * Initialize the view with chat manager
-	 */
-	setChatManager(chatManager: ChatManager): void {
 		this.chatManager = chatManager;
 	}
 
-	/**
-	 * Render the view content
-	 */
+	getViewType(): string {
+		return VIEW_TYPE;
+	}
+
+	getDisplayText(): string {
+		return "EverAI";
+	}
+
+	getIcon(): string {
+		return "bot";
+	}
+
 	async onOpen(): Promise<void> {
-		const container = this.containerEl.children[1];
-		container.empty();
-		container.addClass('everai-chat-view');
 
-		// Create header
-		this.createHeader(container);
+		const root = this.containerEl.children[1];
 
-		// Create messages area
-		this.messagesContainer = container.createDiv('everai-messages-container');
-		this.messagesContainer.setAttribute('role', 'log');
-		this.messagesContainer.setAttribute('aria-label', 'Chat messages');
+		root.empty();
 
-		// Create input area
-		this.createInputArea(container);
+		root.addClass("everai-root");
 
-		// Load initial message history
-		this.loadMessageHistory();
+		this.createLayout(root);
 
-		// Subscribe to events
-		this.subscribeToEvents();
-	}
+		await this.refreshCurrentNote();
 
-	/**
-	 * Create header with title and buttons
-	 */
-	private createHeader(container: HTMLElement): void {
-		const header = container.createDiv('everai-chat-header');
-		header.createEl('h2', { text: 'EverAI Chat', cls: 'everai-chat-title' });
+		await this.refreshMessages();
 
-		const buttonGroup = header.createDiv('everai-button-group');
-
-		// Clear history button
-		this.clearButton = buttonGroup.createEl('button', {
-			text: '🗑️',
-			cls: 'everai-btn everai-btn-icon',
-			attr: { title: 'Clear chat history' },
-		});
-		this.clearButton.addEventListener('click', () => this.clearChat());
-
-		// Info button
-		const infoButton = buttonGroup.createEl('button', {
-			text: 'ℹ️',
-			cls: 'everai-btn everai-btn-icon',
-			attr: { title: 'Plugin information' },
-		});
-		infoButton.addEventListener('click', () => this.showInfo());
-	}
-
-	/**
-	 * Create input area with text input and send button
-	 */
-	private createInputArea(container: HTMLElement): void {
-		const inputArea = container.createDiv('everai-input-area');
-
-		// Text input
-		this.inputElement = inputArea.createEl('textarea', {
-			cls: 'everai-input-field',
-			attr: {
-				placeholder: 'Type your message here...',
-				rows: '3',
-				ariaLabel: 'Chat message input',
-			},
-		}) as HTMLTextAreaElement;
-
-		// Handle Enter key
-		this.inputElement.addEventListener('keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-				e.preventDefault();
-				this.sendMessage();
-			}
-		});
-
-		// Send button
-		const buttonArea = inputArea.createDiv('everai-button-area');
-		this.sendButton = buttonArea.createEl('button', {
-			text: 'Send',
-			cls: 'everai-btn everai-btn-primary',
-		});
-		this.sendButton.addEventListener('click', () => this.sendMessage());
-	}
-
-	/**
-	 * Send message to backend
-	 */
-	private async sendMessage(): Promise<void> {
-		if (!this.inputElement || !this.chatManager) {
-			return;
-		}
-
-		const message = this.inputElement.value.trim();
-		if (!message) {
-			return;
-		}
-
-		this.isLoading = true;
-		this.updateUIState();
-
-		try {
-			// Clear input
-			this.inputElement.value = '';
-
-			// Send message
-			const response = await this.chatManager.sendMessage(message);
-
-			if (response) {
-				eventBus.emit('chat:response-received', {
-					content: response.content,
-					tokensUsed: response.tokensUsed,
-				});
-			} else {
-				eventBus.emit('chat:error', {
-					error: 'Failed to get response from backend',
-					timestamp: Date.now(),
-				});
-			}
-
-			// Reload messages
-			this.loadMessageHistory();
-		} catch (error) {
-			logger.error('Error sending message', error);
-			eventBus.emit('chat:error', {
-				error: String(error),
-				timestamp: Date.now(),
-			});
-		} finally {
-			this.isLoading = false;
-			this.updateUIState();
-		}
-	}
-
-	/**
-	 * Load and display message history
-	 */
-	private loadMessageHistory(): void {
-		if (!this.messagesContainer || !this.chatManager) {
-			return;
-		}
-
-		this.messagesContainer.empty();
-
-		const messages = this.chatManager.getHistory();
-
-		if (messages.length === 0) {
-			const emptyState = this.messagesContainer.createDiv('everai-empty-state');
-			emptyState.createEl('p', {
-				text: 'No messages yet. Start a conversation!',
-				cls: 'everai-empty-text',
-			});
-			return;
-		}
-
-		messages.forEach((msg) => {
-			this.renderMessage(msg);
-		});
-
-		// Scroll to bottom
-		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-	}
-
-	/**
-	 * Render a single message
-	 */
-	private renderMessage(message: ChatMessage): void {
-		if (!this.messagesContainer) {
-			return;
-		}
-
-		const messageEl = this.messagesContainer.createDiv(
-			`everai-message everai-message-${message.role}`
-		);
-
-		// Message header
-		const header = messageEl.createDiv('everai-message-header');
-		const roleEl = header.createSpan('everai-message-role');
-		roleEl.textContent =
-			message.role === 'user' ? 'You' : message.role === 'assistant' ? 'EverAI' : 'System';
-
-		const timeEl = header.createSpan('everai-message-time');
-		const time = new Date(message.timestamp);
-		timeEl.textContent = time.toLocaleTimeString();
-
-		// Message content
-		const contentEl = messageEl.createDiv('everai-message-content');
-		contentEl.textContent = message.content;
-
-		// Token info for assistant messages
-		if (message.role === 'assistant' && message.tokensUsed) {
-			const infoEl = messageEl.createDiv('everai-message-info');
-			infoEl.textContent = `Tokens: ${message.tokensUsed}`;
-		}
-	}
-
-	/**
-	 * Clear chat history
-	 */
-	private clearChat(): void {
-		if (this.chatManager) {
-			this.chatManager.clearHistory();
-			this.loadMessageHistory();
-			logger.info('Chat cleared by user');
-		}
-	}
-
-	/**
-	 * Show plugin information
-	 */
-	private showInfo(): void {
-		if (!this.messagesContainer) {
-			return;
-		}
-
-		const infoBox = this.messagesContainer.createDiv('everai-info-box');
-		infoBox.createEl('h3', { text: 'EverAI Plugin v0.1.0' });
-		infoBox.createEl('p', {
-			text: 'Offline-first AI assistant for Obsidian on Android',
-		});
-		infoBox.createEl('ul', {
-			text: 'Features:\n• Local LLM execution\n• Conversation memory\n• Vault integration',
-		});
-	}
-
-	/**
-	 * Subscribe to event bus
-	 */
-	private subscribeToEvents(): void {
-		eventBus.on('chat:error', (data) => {
-			logger.error('Chat error:', data.error);
-			if (this.messagesContainer) {
-				const errorEl = this.messagesContainer.createDiv('everai-error');
-				errorEl.textContent = `Error: ${truncateText(data.error, 100)}`;
-			}
-		});
-	}
-
-	/**
-	 * Update UI state based on loading status
-	 */
-	private updateUIState(): void {
-		if (!this.inputElement || !this.sendButton) {
-			return;
-		}
-
-		if (this.isLoading) {
-			this.inputElement.disabled = true;
-			this.sendButton.disabled = true;
-			this.sendButton.textContent = 'Sending...';
-		} else {
-			this.inputElement.disabled = false;
-			this.sendButton.disabled = false;
-			this.sendButton.textContent = 'Send';
-		}
+		this.input.focus();
 	}
 
 	async onClose(): Promise<void> {
-		// Cleanup
-	}
-}
 
-export const VIEW_TYPE = VIEW_TYPE_CHAT;
+	}
+
+	private createLayout(root: Element): void {
+
+		/* ---------------- Header ---------------- */
+
+		this.header = root.createDiv({
+			cls: "everai-header"
+		});
+
+		const title = this.header.createDiv({
+			cls: "everai-title"
+		});
+
+		title.createEl("h2", {
+			text: "🤖 EverAI"
+		});
+
+		this.status = title.createDiv({
+			cls: "everai-status"
+		});
+
+		this.status.setText("🟢 Local");
+
+		/* -------------- Current Note ----------- */
+
+		const noteCard = root.createDiv({
+			cls: "everai-note-card"
+		});
+
+		noteCard.createEl("small", {
+			text: "Current Note"
+		});
+
+		this.currentNote = noteCard.createDiv({
+			cls: "everai-current-note"
+		});
+
+		this.currentNote.setText("None");
+
+		/* --------------- Messages -------------- */
+
+		this.messages = root.createDiv({
+			cls: "everai-messages"
+		});
+
+		/* ---------------- Footer --------------- */
+
+		const footer = root.createDiv({
+			cls: "everai-footer"
+		});
+
+		this.input = footer.createEl("textarea");
+
+		this.input.placeholder = "Ask EverAI...";
+
+		this.input.rows = 3;
+
+		const buttonRow = footer.createDiv({
+			cls: "everai-buttons"
+		});
+
+		this.sendButton = buttonRow.createEl("button");
+
+		this.sendButton.setText("Send");
+
+		this.stopButton = buttonRow.createEl("button");
+
+		this.stopButton.setText("Stop");
+
+		this.stopButton.disabled = true;
+
+		this.sendButton.onclick = () => {
+			this.handleSend();
+		};
+
+		this.stopButton.onclick = () => {
+			this.handleStop();
+		};
+
+		this.input.addEventListener("keydown", async (e) => {
+
+			if (
+				e.key === "Enter" &&
+				!e.shiftKey
+			) {
+
+				e.preventDefault();
+
+				await this.handleSend();
+			}
+
+		});
+
+
+		
+	}
+		/**
+	 * Refresh current note card.
+	 */
+	private async refreshCurrentNote(): Promise<void> {
+
+		const file = this.app.workspace.getActiveFile();
+
+		if (!file) {
+			this.currentNote.setText("None");
+			return;
+		}
+
+		this.currentNote.setText(file.path);
+	}
+
+	/**
+	 * Reload conversation.
+	 */
+	private async refreshMessages(): Promise<void> {
+
+		this.messages.empty();
+
+		const history = this.chatManager.getHistory();
+
+		if (history.length === 0) {
+
+			const empty = this.messages.createDiv({
+				cls: "everai-empty"
+			});
+
+			empty.setText("Start chatting with EverAI.");
+
+			return;
+		}
+
+		for (const message of history) {
+			await this.renderMessage(message);
+		}
+
+		this.scrollToBottom();
+	}
+
+	/**
+	 * Render one message.
+	 */
+	private async renderMessage(
+		message: ChatMessage
+	): Promise<void> {
+
+		const bubble = this.messages.createDiv({
+			cls: `everai-bubble everai-${message.role}`
+		});
+
+		const header = bubble.createDiv({
+			cls: "everai-bubble-header"
+		});
+
+		header.setText(
+			message.role === "user"
+				? "👤 You"
+				: message.role === "assistant"
+				? "🤖 EverAI"
+				: "⚙️ System"
+		);
+
+		const body = bubble.createDiv({
+			cls: "everai-bubble-body"
+		});
+
+		await MarkdownRenderer.render(
+			this.app,
+			message.content,
+			body,
+			"",
+			this
+		);
+	}
+
+	/**
+	 * Scroll chat to bottom.
+	 */
+	private scrollToBottom(): void {
+
+		requestAnimationFrame(() => {
+
+			this.messages.scrollTop =
+				this.messages.scrollHeight;
+
+		});
+	}
+
+	/**
+	 * Typing indicator.
+	 */
+	private showTyping(): void {
+
+		const typing = this.messages.createDiv({
+			cls: "everai-typing"
+		});
+
+		typing.setText("🤖 EverAI is thinking...");
+
+		this.scrollToBottom();
+	}
+		/**
+	 * Send a message.
+	 */
+	private async handleSend(): Promise<void> {
+
+		if (this.isGenerating) {
+			return;
+		}
+
+		const text = this.input.value.trim();
+
+		if (!text) {
+			return;
+		}
+
+		this.isGenerating = true;
+
+		this.sendButton.disabled = true;
+		this.stopButton.disabled = false;
+		this.input.disabled = true;
+
+		this.input.value = "";
+
+		try {
+
+			this.showTyping();
+
+			await this.chatManager.sendMessage(text);
+
+			await this.refreshMessages();
+
+		} catch (error) {
+
+			console.error(error);
+
+			new Notice(
+				error instanceof Error
+					? error.message
+					: "Failed to send message."
+			);
+
+		} finally {
+
+			this.isGenerating = false;
+
+			this.sendButton.disabled = false;
+			this.stopButton.disabled = true;
+			this.input.disabled = false;
+
+			this.input.focus();
+
+		}
+	}
+
+	/**
+	 * Stop current generation.
+	 */
+	private handleStop(): void {
+
+		if (!this.isGenerating) {
+			return;
+		}
+
+		this.chatManager.cancelGeneration();
+
+		this.isGenerating = false;
+
+		this.sendButton.disabled = false;
+		this.stopButton.disabled = true;
+		this.input.disabled = false;
+
+		new Notice("Generation cancelled.");
+	}
+
+	/**
+	 * Refresh backend status.
+	 */
+	public async updateStatus(
+		connected: boolean
+	): Promise<void> {
+
+		this.status.setText(
+			connected
+				? "🟢 Local"
+				: "🔴 Offline"
+		);
+
+	}
+
+	/**
+	 * Called when this view becomes active.
+	 */
+	async onPaneMenu(): Promise<void> {
+
+		await this.refreshCurrentNote();
+
+	}
+
+	async onClose(): Promise<void> {
+
+		this.chatManager.cancelGeneration();
+
+	}
+	}
