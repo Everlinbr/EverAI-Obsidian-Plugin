@@ -1,17 +1,12 @@
-import esbuild from 'esbuild';
-import process from 'process';
-import builtInModules from 'builtin-modules';
+import { defineConfig } from 'esbuild';
+import builtinModules from 'builtin-modules';
 
-const banner =
-`/*
-EverAI Obsidian Plugin
-Offline-first AI assistant for Obsidian
-*/
-`;
+const isProd = process.argv[2] === 'production';
 
-const prod = (process.argv[2] === 'production');
-const context = await esbuild.context({
-  banner: { js: banner },
+const config = defineConfig({
+  banner: {
+    js: '/*\nEverAI Obsidian Plugin\nOffline-first AI assistant for Obsidian on Android\n*/',
+  },
   entryPoints: ['src/main.ts'],
   bundle: true,
   external: [
@@ -28,19 +23,22 @@ const context = await esbuild.context({
     '@lezer/common',
     '@lezer/highlight',
     '@lezer/lr',
-    ...builtInModules,
   ],
   format: 'cjs',
   target: 'ES6',
   logLevel: 'info',
-  sourcemap: prod ? false : 'inline',
+  sourcemap: isProd ? false : 'inline',
   treeShaking: true,
   outfile: 'main.js',
 });
 
-if (prod) {
-  await context.rebuild();
-  process.exit(0);
-} else {
-  await context.watch();
+if (!isProd) {
+  config.watch = {
+    onRebuild(error) {
+      if (error) console.error('watch build failed:', error);
+      else console.log('watch build succeeded');
+    },
+  };
 }
+
+export default config;
