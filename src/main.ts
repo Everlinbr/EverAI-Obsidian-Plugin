@@ -1,61 +1,113 @@
-import { Plugin } from 'obsidian';
-import { EverAISettings, DEFAULT_SETTINGS } from './settings';
-import { registerCommands } from './commands';
-import { EverAISettingTab } from './ui/settings-tab';
-import { BackendClient } from './backend/client';
+import {
+	App,
+	Plugin,
+	WorkspaceLeaf,
+} from "obsidian";
 
-/**
- * EverAI Plugin - Main entry point
- * 
- * Responsibilities:
- * - Plugin lifecycle management (onload, onunload)
- * - Settings initialization and persistence
- * - Command registration
- * - Backend client initialization
- */
+import { EverAISettings, DEFAULT_SETTINGS } from "./settings";
+import { registerCommands } from "./commands";
+import { EverAISettingTab } from "./ui/settings-tab";
+
+import { BackendClient } from "./backend/client";
+import { MemoryStore } from "./core/memory";
+import { ChatManager } from "./core/chat-manager";
+
+import { ChatView, VIEW_TYPE } from "./ui/chat-view";
+
 export default class EverAIPlugin extends Plugin {
+
 	settings!: EverAISettings;
+
 	backendClient!: BackendClient;
 
-	/**
-	 * Plugin load hook - called when Obsidian loads the plugin
-	 */
-	async onload(): Promise<void> {
-		console.log('EverAI: Loading plugin...');
+	memoryStore!: MemoryStore;
 
-		// Initialize settings from saved data or use defaults
+	chatManager!: ChatManager;
+
+	async onload(): Promise<void> {
+
+		console.log("EverAI loading...");
+
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<EverAISettings>,
+			await this.loadData()
 		);
 
-		// Initialize backend client
-		this.backendClient = new BackendClient(this.settings.backendUrl);
+		this.backendClient = new BackendClient(
+			this.settings.backendUrl,
+			this.settings.backendPort
+		);
 
-		// Register all commands
+		this.memoryStore = new MemoryStore();
+
+		this.chatManager = new ChatManager(
+			this.backendClient,
+			this.memoryStore
+		);
+
+		this.registerView(
+			VIEW_TYPE,
+			(leaf: WorkspaceLeaf) => {
+
+				const view = new ChatView(leaf);
+
+				view.setChatManager(this.chatManager);
+
+				return view;
+
+			}
+		);
+
 		registerCommands(this);
 
-		// Register settings tab
-		this.addSettingTab(new EverAISettingTab(this.app, this));
+		this.addSettingTab(
+			new EverAISettingTab(
+				this.app,
+				this
+			)
+		);
 
-		console.log('EverAI: Plugin loaded successfully');
+		if (this.settings.showChatSidebar) {
+			await this.activateChatView();
+		}
+
+		console.log("EverAI loaded.");
 	}
 
-	/**
-	 * Plugin unload hook - called when Obsidian unloads the plugin
-	 * Cleanup all listeners and resources
-	 */
 	async onunload(): Promise<void> {
-		console.log('EverAI: Unloading plugin...');
-		// All registered event listeners and DOM listeners are automatically cleaned up
-		// by Obsidian's plugin system via register* helpers
+
+		await this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+
+		console.log("EverAI unloaded.");
+
 	}
 
-	/**
-	 * Save settings to persistent storage
-	 */
 	async saveSettings(): Promise<void> {
+
 		await this.saveData(this.settings);
+
+	}
+
+	async activateChatView(): Promise<void> {
+
+		let leaf = this.app.workspace
+			.getLeavesOfType(VIEW_TYPE)[0];
+
+		if (!leaf) {
+
+			leaf = this.app.workspace.getRightLeaf(false);
+
+			if (!leaf) return;
+
+			await leaf.setViewState({
+				type: VIEW_TYPE,
+				active: true,
+			});
+
+		}
+
+		this.app.workspace.revealLeaf(leaf);
+
 	}
 }
