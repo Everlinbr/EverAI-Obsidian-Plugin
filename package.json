@@ -1,32 +1,38 @@
+/**
+ * Package.json - NPM dependencies and scripts
+ */
+
 {
   "name": "everai-obsidian-plugin",
   "version": "0.1.0",
-  "description": "Offline-first AI assistant for Obsidian on Android devices",
+  "description": "Offline-first AI assistant for Obsidian on Android",
   "main": "main.js",
+  "type": "module",
   "scripts": {
-    "dev": "esbuild src/main.ts --bundle --external:obsidian --outfile=main.js --watch",
-    "build": "esbuild src/main.ts --bundle --external:obsidian --outfile=main.js --minify",
-    "lint": "eslint src --ext .ts"
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "lint": "eslint src/ --ext .ts"
   },
   "keywords": [
     "obsidian",
     "plugin",
     "ai",
-    "offline",
+    "llm",
     "android",
-    "local-llm"
+    "offline"
   ],
   "author": "Everlinbr",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^18.0.0",
+    "@types/node": "^18.17.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
+    "builtin-modules": "^3.3.0",
     "esbuild": "^0.19.0",
-    "eslint": "^8.0.0",
-    "eslint-plugin-obsidianmd": "^1.0.0",
-    "obsidian": "latest",
-    "tslib": "2.6.0",
-    "typescript": "5.2.2"
-  }
+    "eslint": "^8.45.0",
+    "obsidian": "^1.4.0",
+    "tslib": "2.4.0",
+    "typescript": "4.7.4"
+  },
+  "dependencies": {}
 }
